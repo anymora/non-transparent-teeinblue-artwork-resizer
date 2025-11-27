@@ -5,70 +5,59 @@ import sharp from "sharp";
 
 const app = express();
 
-// Tragetaschen-Mockup (Hintergrund) – gleich wie beim anderen Backend
+// Mockups
 const TOTE_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/Tragetasche_Mockup.jpg?v=1763713012";
 
-// Einfacher In-Memory-Cache: artworkUrl -> fertiges PNG
-// (damit Poster/Fußmatten nach dem ersten Aufruf extrem schnell sind)
-const previewCache = new Map(); // key: artworkUrl, value: Buffer
+const MUG_MOCKUP_URL =
+  "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1833.jpg?v=1764169061";
+
+// In-Memory Cache: key -> fertiges PNG
+const previewCache = new Map();
 
 // Healthcheck
 app.get("/", (req, res) => {
-  res.send(
-    "teeinblue-rect-artwork-backend (ohne Background-Removal, nur Overlay auf Tragetaschen-Mockup) läuft."
-  );
+  res.send("teeinblue-artwork-resizer (ohne BG-Removal, Tasche + Tasse) läuft.");
 });
 
 /**
- * GET /tote-preview?url=<URL_DES_ARTWORK-BILDES>
- *
- * Erwartet: Rechteckiges/quadratisches Artwork, bei dem der Hintergrund
- * NICHT entfernt werden soll (Poster, Fußmatte, vollflächige Designs).
- *
- * Ablauf:
- * 1. Artwork von der URL laden
- * 2. Artwork in PNG mit Alpha konvertieren und auf sinnvolle Breite skalieren
- * 3. Tragetaschen-Mockup laden
- * 4. Artwork auf Tasche positionieren
- * 5. Fertiges PNG zurückgeben
+ * Hilfsfunktion: Artwork von URL laden und als PNG mit Alpha zurückgeben
+ */
+async function loadArtworkAsPng(artworkUrl) {
+  const artResp = await fetch(artworkUrl);
+  if (!artResp.ok) {
+    throw new Error(`Konnte Artwork-Bild nicht laden. HTTP ${artResp.status}`);
+  }
+  const artArrayBuf = await artResp.arrayBuffer();
+  const artBuffer = Buffer.from(artArrayBuf);
+
+  // Kein Hintergrund-Removal – nur nach PNG mit Alpha konvertieren
+  const pngBuffer = await sharp(artBuffer).ensureAlpha().png().toBuffer();
+  return pngBuffer;
+}
+
+/**
+ * GET /tote-preview?url=<URL_DES_ARTWORKS>
+ * Rechteckiges Artwork direkt auf Tragetaschen-Mockup legen.
  */
 app.get("/tote-preview", async (req, res) => {
   const artworkUrl = req.query.url;
 
   if (!artworkUrl || typeof artworkUrl !== "string") {
-    return res
-      .status(400)
-      .json({ error: "Parameter 'url' fehlt oder ist ungültig." });
+    return res.status(400).json({ error: "Parameter 'url' fehlt oder ist ungültig." });
   }
 
-  // 0. Cache-Hit? -> sofort zurück
-  if (previewCache.has(artworkUrl)) {
-    const cachedBuffer = previewCache.get(artworkUrl);
+  const cacheKey = "tote-" + artworkUrl;
+  if (previewCache.has(cacheKey)) {
     res.setHeader("Content-Type", "image/png");
-    return res.send(cachedBuffer);
+    return res.send(previewCache.get(cacheKey));
   }
 
   try {
-    // 1. Artwork laden
-    const artResp = await fetch(artworkUrl);
-    if (!artResp.ok) {
-      return res.status(400).json({
-        error: "Konnte Artwork-Bild nicht laden.",
-        detail: `HTTP ${artResp.status}`,
-      });
-    }
-    const artArrayBuf = await artResp.arrayBuffer();
-    const artBuffer = Buffer.from(artArrayBuf);
+    // 1. Artwork laden (ohne BG-Removal)
+    const artworkPngBuffer = await loadArtworkAsPng(artworkUrl);
 
-    // 2. Artwork in PNG mit Alpha bringen + skalieren
-    //    Keine Hintergrund-Entfernung – Design bleibt 1:1 so wie es ist.
-    const artPngBuffer = await sharp(artBuffer)
-      .ensureAlpha()
-      .png()
-      .toBuffer();
-
-    // 3. Tragetaschen-Mockup laden
+    // 2. Tragetaschen-Mockup laden
     const toteResp = await fetch(TOTE_MOCKUP_URL);
     if (!toteResp.ok) {
       return res.status(500).json({
@@ -88,9 +77,8 @@ app.get("/tote-preview", async (req, res) => {
         .json({ error: "Konnte Größe des Tragetaschen-Mockups nicht lesen." });
     }
 
-    // 4. Artwork auf eine sinnvolle Größe für die Tasche skalieren
-    //    Werte kannst du exakt wie im anderen Backend halten oder separat tunen.
-    const designOnToteBuffer = await sharp(artPngBuffer)
+    // 3. Artwork skalieren (Breite ~42% der Tasche, wie im anderen Backend)
+    const designOnToteBuffer = await sharp(artworkPngBuffer)
       .resize(Math.round(toteMeta.width * 0.42), null, {
         fit: "inside",
         fastShrinkOnLoad: true,
@@ -98,7 +86,7 @@ app.get("/tote-preview", async (req, res) => {
       .png()
       .toBuffer();
 
-    // Position auf der Tasche (gleich wie im anderen Backend, damit es konsistent ist)
+    // Position auf der Tasche (wie im anderen Backend)
     const offsetLeft = Math.round(toteMeta.width * 0.26);
     const offsetTop = Math.round(toteMeta.height * 0.46);
 
@@ -113,16 +101,97 @@ app.get("/tote-preview", async (req, res) => {
       .png()
       .toBuffer();
 
-    // 5. Ergebnis cachen
-    previewCache.set(artworkUrl, finalBuffer);
+    // 4. Cache
+    previewCache.set(cacheKey, finalBuffer);
 
-    // 6. Fertiges Bild zurückgeben
+    // 5. Antwort
     res.setHeader("Content-Type", "image/png");
     res.send(finalBuffer);
   } catch (err) {
-    console.error("Fehler in /tote-preview (rect-backend):", err);
+    console.error("Fehler in /tote-preview:", err);
     return res.status(500).json({
       error: "Interner Fehler in /tote-preview",
+      detail: err.message || String(err),
+    });
+  }
+});
+
+/**
+ * GET /mug-preview?url=<URL_DES_ARTWORKS>
+ * Rechteckiges Artwork direkt auf Tassen-Mockup legen (ohne BG-Removal),
+ * klein zentriert in der Mitte der Tasse.
+ */
+app.get("/mug-preview", async (req, res) => {
+  const artworkUrl = req.query.url;
+
+  if (!artworkUrl || typeof artworkUrl !== "string") {
+    return res.status(400).json({ error: "Parameter 'url' fehlt oder ist ungültig." });
+  }
+
+  const cacheKey = "mug-" + artworkUrl;
+  if (previewCache.has(cacheKey)) {
+    res.setHeader("Content-Type", "image/png");
+    return res.send(previewCache.get(cacheKey));
+  }
+
+  try {
+    // 1. Artwork laden (ohne BG-Removal)
+    const artworkPngBuffer = await loadArtworkAsPng(artworkUrl);
+
+    // 2. Tassen-Mockup laden
+    const mugResp = await fetch(MUG_MOCKUP_URL);
+    if (!mugResp.ok) {
+      return res.status(500).json({
+        error: "Konnte Tassen-Mockup nicht laden.",
+        detail: `HTTP ${mugResp.status}`,
+      });
+    }
+    const mugArrayBuf = await mugResp.arrayBuffer();
+    const mugBuffer = Buffer.from(mugArrayBuf);
+
+    const mugSharp = sharp(mugBuffer);
+    const mugMeta = await mugSharp.metadata();
+
+    if (!mugMeta.width || !mugMeta.height) {
+      return res
+        .status(500)
+        .json({ error: "Konnte Größe des Tassen-Mockups nicht lesen." });
+    }
+
+    // 3. Artwork skalieren → ca. 28% der Breite der Tasse (wie im anderen Backend)
+    const designOnMugBuffer = await sharp(artworkPngBuffer)
+      .resize(Math.round(mugMeta.width * 0.28), null, {
+        fit: "inside",
+        fastShrinkOnLoad: true,
+      })
+      .png()
+      .toBuffer();
+
+    // 4. Positionierung – optisch mittig vorne auf der Tasse
+    const offsetLeft = Math.round(mugMeta.width * 0.36);
+    const offsetTop = Math.round(mugMeta.height * 0.40);
+
+    const finalBuffer = await mugSharp
+      .composite([
+        {
+          input: designOnMugBuffer,
+          left: offsetLeft,
+          top: offsetTop,
+        },
+      ])
+      .png()
+      .toBuffer();
+
+    // 5. Cache
+    previewCache.set(cacheKey, finalBuffer);
+
+    // 6. Antwort
+    res.setHeader("Content-Type", "image/png");
+    res.send(finalBuffer);
+  } catch (err) {
+    console.error("Fehler in /mug-preview:", err);
+    return res.status(500).json({
+      error: "Interner Fehler in /mug-preview",
       detail: err.message || String(err),
     });
   }
@@ -131,5 +200,5 @@ app.get("/tote-preview", async (req, res) => {
 // Server starten
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Rect-Artwork-Backend läuft auf Port ${PORT}`);
+  console.log(`Server läuft auf Port ${PORT}`);
 });
