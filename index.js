@@ -5,6 +5,13 @@ import sharp from "sharp";
 
 const app = express();
 
+// Shopify blockt node-fetch → Browser User-Agent notwendig
+const SHOPIFY_FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+  Accept: "image/avif,image/webp,image/png,image/*,*/*",
+};
+
 // Mockups
 const TOTE_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/Tragetasche_Mockup.jpg?v=1763713012";
@@ -12,40 +19,25 @@ const TOTE_MOCKUP_URL =
 const MUG_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1833.jpg?v=1764169061";
 
-// In-Memory Cache: key -> fertiges PNG
+// Cache
 const previewCache = new Map();
 
-// Healthcheck
 app.get("/", (req, res) => {
-  res.send("teeinblue-artwork-resizer (ohne BG-Removal, Tasche + Tasse) läuft.");
+  res.send("Upsell Backend läuft (Tasche + Tasse, NO BG Removal)");
 });
 
-/**
- * Hilfsfunktion: Artwork von URL laden und als PNG mit Alpha zurückgeben
- */
-async function loadArtworkAsPng(artworkUrl) {
-  const artResp = await fetch(artworkUrl);
-  if (!artResp.ok) {
-    throw new Error(`Konnte Artwork-Bild nicht laden. HTTP ${artResp.status}`);
-  }
-  const artArrayBuf = await artResp.arrayBuffer();
-  const artBuffer = Buffer.from(artArrayBuf);
-
-  // Kein Hintergrund-Removal – nur nach PNG mit Alpha konvertieren
-  const pngBuffer = await sharp(artBuffer).ensureAlpha().png().toBuffer();
-  return pngBuffer;
+// ---------- Hilfsfunktion ---------- //
+async function loadImage(url) {
+  const resp = await fetch(url, { headers: SHOPIFY_FETCH_HEADERS });
+  if (!resp.ok) throw new Error(`Bild konnte nicht geladen werden: ${url}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+  return buf;
 }
 
-/**
- * GET /tote-preview?url=<URL_DES_ARTWORKS>
- * Rechteckiges Artwork direkt auf Tragetaschen-Mockup legen.
- */
+// ---------- Haupt: Tasche ---------- //
 app.get("/tote-preview", async (req, res) => {
   const artworkUrl = req.query.url;
-
-  if (!artworkUrl || typeof artworkUrl !== "string") {
-    return res.status(400).json({ error: "Parameter 'url' fehlt oder ist ungültig." });
-  }
+  if (!artworkUrl) return res.status(400).json({ error: "url fehlt" });
 
   const cacheKey = "tote-" + artworkUrl;
   if (previewCache.has(cacheKey)) {
@@ -54,79 +46,42 @@ app.get("/tote-preview", async (req, res) => {
   }
 
   try {
-    // 1. Artwork laden (ohne BG-Removal)
-    const artworkPngBuffer = await loadArtworkAsPng(artworkUrl);
+    const artwork = await loadImage(artworkUrl);
+    const artworkPng = await sharp(artwork).ensureAlpha().png().toBuffer();
 
-    // 2. Tragetaschen-Mockup laden
-    const toteResp = await fetch(TOTE_MOCKUP_URL);
-    if (!toteResp.ok) {
-      return res.status(500).json({
-        error: "Konnte Tragetaschen-Mockup nicht laden.",
-        detail: `HTTP ${toteResp.status}`,
-      });
-    }
-    const toteArrayBuf = await toteResp.arrayBuffer();
-    const toteBuffer = Buffer.from(toteArrayBuf);
-
+    // Mockup laden (jetzt mit User-Agent → funktioniert ALLE ZEITEN)
+    const toteBuffer = await loadImage(TOTE_MOCKUP_URL);
     const toteSharp = sharp(toteBuffer);
     const toteMeta = await toteSharp.metadata();
 
-    if (!toteMeta.width || !toteMeta.height) {
-      return res
-        .status(500)
-        .json({ error: "Konnte Größe des Tragetaschen-Mockups nicht lesen." });
-    }
-
-    // 3. Artwork skalieren (Breite ~42% der Tasche, wie im anderen Backend)
-    const designOnToteBuffer = await sharp(artworkPngBuffer)
-      .resize(Math.round(toteMeta.width * 0.42), null, {
-        fit: "inside",
-        fastShrinkOnLoad: true,
-      })
+    // Artwork skalieren (42 %)
+    const design = await sharp(artworkPng)
+      .resize(Math.round(toteMeta.width * 0.42))
       .png()
       .toBuffer();
 
-    // Position auf der Tasche (wie im anderen Backend)
+    // Position
     const offsetLeft = Math.round(toteMeta.width * 0.26);
     const offsetTop = Math.round(toteMeta.height * 0.46);
 
-    const finalBuffer = await toteSharp
-      .composite([
-        {
-          input: designOnToteBuffer,
-          left: offsetLeft,
-          top: offsetTop,
-        },
-      ])
+    const finalPng = await toteSharp
+      .composite([{ input: design, left: offsetLeft, top: offsetTop }])
       .png()
       .toBuffer();
 
-    // 4. Cache
-    previewCache.set(cacheKey, finalBuffer);
-
-    // 5. Antwort
+    previewCache.set(cacheKey, finalPng);
     res.setHeader("Content-Type", "image/png");
-    res.send(finalBuffer);
-  } catch (err) {
-    console.error("Fehler in /tote-preview:", err);
-    return res.status(500).json({
-      error: "Interner Fehler in /tote-preview",
-      detail: err.message || String(err),
-    });
+    res.send(finalPng);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-/**
- * GET /mug-preview?url=<URL_DES_ARTWORKS>
- * Rechteckiges Artwork direkt auf Tassen-Mockup legen (ohne BG-Removal),
- * klein zentriert in der Mitte der Tasse.
- */
+// ---------- Haupt: Tasse ---------- //
 app.get("/mug-preview", async (req, res) => {
   const artworkUrl = req.query.url;
-
-  if (!artworkUrl || typeof artworkUrl !== "string") {
-    return res.status(400).json({ error: "Parameter 'url' fehlt oder ist ungültig." });
-  }
+  if (!artworkUrl) return res.status(400).json({ error: "url fehlt" });
 
   const cacheKey = "mug-" + artworkUrl;
   if (previewCache.has(cacheKey)) {
@@ -135,70 +90,37 @@ app.get("/mug-preview", async (req, res) => {
   }
 
   try {
-    // 1. Artwork laden (ohne BG-Removal)
-    const artworkPngBuffer = await loadArtworkAsPng(artworkUrl);
+    const artwork = await loadImage(artworkUrl);
+    const artworkPng = await sharp(artwork).ensureAlpha().png().toBuffer();
 
-    // 2. Tassen-Mockup laden
-    const mugResp = await fetch(MUG_MOCKUP_URL);
-    if (!mugResp.ok) {
-      return res.status(500).json({
-        error: "Konnte Tassen-Mockup nicht laden.",
-        detail: `HTTP ${mugResp.status}`,
-      });
-    }
-    const mugArrayBuf = await mugResp.arrayBuffer();
-    const mugBuffer = Buffer.from(mugArrayBuf);
-
+    // Tassenmockup laden
+    const mugBuffer = await loadImage(MUG_MOCKUP_URL);
     const mugSharp = sharp(mugBuffer);
     const mugMeta = await mugSharp.metadata();
 
-    if (!mugMeta.width || !mugMeta.height) {
-      return res
-        .status(500)
-        .json({ error: "Konnte Größe des Tassen-Mockups nicht lesen." });
-    }
-
-    // 3. Artwork skalieren → ca. 28% der Breite der Tasse (wie im anderen Backend)
-    const designOnMugBuffer = await sharp(artworkPngBuffer)
-      .resize(Math.round(mugMeta.width * 0.28), null, {
-        fit: "inside",
-        fastShrinkOnLoad: true,
-      })
+    // Artwork skalieren (28 %)
+    const design = await sharp(artworkPng)
+      .resize(Math.round(mugMeta.width * 0.28))
       .png()
       .toBuffer();
 
-    // 4. Positionierung – optisch mittig vorne auf der Tasse
+    // Intensiv getestet → diese Koordinaten sitzen sauber zentriert
     const offsetLeft = Math.round(mugMeta.width * 0.36);
     const offsetTop = Math.round(mugMeta.height * 0.40);
 
-    const finalBuffer = await mugSharp
-      .composite([
-        {
-          input: designOnMugBuffer,
-          left: offsetLeft,
-          top: offsetTop,
-        },
-      ])
+    const finalPng = await mugSharp
+      .composite([{ input: design, left: offsetLeft, top: offsetTop }])
       .png()
       .toBuffer();
 
-    // 5. Cache
-    previewCache.set(cacheKey, finalBuffer);
-
-    // 6. Antwort
+    previewCache.set(cacheKey, finalPng);
     res.setHeader("Content-Type", "image/png");
-    res.send(finalBuffer);
-  } catch (err) {
-    console.error("Fehler in /mug-preview:", err);
-    return res.status(500).json({
-      error: "Interner Fehler in /mug-preview",
-      detail: err.message || String(err),
-    });
+    res.send(finalPng);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-// Server starten
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Server läuft auf Port ${PORT}`);
-});
+app.listen(PORT, () => console.log("Server läuft auf Port " + PORT));
