@@ -5,21 +5,21 @@ import sharp from "sharp";
 
 const app = express();
 
-// Shopify mag einen Browser-User-Agent
+// Shopify CDN mag einen Browser-User-Agent
 const SHOPIFY_FETCH_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
   Accept: "image/avif,image/webp,image/png,image/*,*/*",
 };
 
-// Mockups
+// Mockup-URLs
 const TOTE_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/Tragetasche_Mockup.jpg?v=1763713012";
 
 const MUG_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1833.jpg?v=1764169061";
 
-// In-Memory Cache
+// In-Memory Cache: key -> PNG Buffer
 const previewCache = new Map();
 
 // Healthcheck
@@ -28,24 +28,24 @@ app.get("/", (req, res) => {
 });
 
 // --------------------------------------------------
-// Hilfsfunktion: Bild von URL laden (Shopify-kompatibel)
+// Bild von URL laden (Shopify-kompatibel)
 // --------------------------------------------------
 async function loadImage(url) {
   const resp = await fetch(url, { headers: SHOPIFY_FETCH_HEADERS });
   if (!resp.ok) {
     throw new Error(`Bild konnte nicht geladen werden: ${url} (HTTP ${resp.status})`);
   }
-  const buf = Buffer.from(await resp.arrayBuffer());
-  return buf;
+  return Buffer.from(await resp.arrayBuffer());
 }
 
 // --------------------------------------------------
-// Hilfsfunktion: Artwork auf Mockup legen (ohne BG-Entfernung)
+// Artwork auf Mockup legen (ohne Hintergrundentfernung)
 // --------------------------------------------------
 async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, offsetY }) {
   // Artwork laden
   const artBuf = await loadImage(artworkUrl);
-  // Sicherstellen, dass wir ein PNG mit Alpha haben
+
+  // in PNG mit Alpha konvertieren (falls nötig)
   const artPng = await sharp(artBuf).ensureAlpha().png().toBuffer();
 
   // Mockup laden
@@ -57,7 +57,7 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
     throw new Error("Konnte Mockup-Abmessungen nicht lesen.");
   }
 
-  // Artwork skalieren (Breite = scale * Mockup-Breite)
+  // Artwork skalieren: Breite = scale * Mockup-Breite
   const scaledArt = await sharp(artPng)
     .resize(Math.round(meta.width * scale), null, {
       fit: "inside",
@@ -79,7 +79,7 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
 }
 
 // --------------------------------------------------
-// /tote-preview – Artwork auf Tragetasche (ohne BG-Removal)
+// /tote-preview – Artwork auf Tragetasche
 // --------------------------------------------------
 app.get("/tote-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -98,8 +98,8 @@ app.get("/tote-preview", async (req, res) => {
     const finalBuffer = await placeArtworkOnMockup({
       artworkUrl,
       mockupUrl: TOTE_MOCKUP_URL,
-      scale: 0.42,   // 42 % der Breite der Tasche
-      offsetX: 0.26, // leicht nach links
+      scale: 0.42,   // ~42 % der Taschenbreite
+      offsetX: 0.26, // leicht links
       offsetY: 0.46, // etwas nach unten
     });
 
@@ -108,15 +108,15 @@ app.get("/tote-preview", async (req, res) => {
     res.send(finalBuffer);
   } catch (err) {
     console.error("Fehler in /tote-preview (NO BG):", err);
-    return res.status(500).json({
-      error: "Interner Fehler in /tote-preview",
+    res.status(500).json({
+      error: "Interner Fehler in /tote-preview (NO BG)",
       detail: err.message || String(err),
     });
   }
 });
 
 // --------------------------------------------------
-// /mug-preview – Artwork auf Tasse (ohne BG-Removal)
+// /mug-preview – Artwork auf Tasse
 // --------------------------------------------------
 app.get("/mug-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -136,8 +136,8 @@ app.get("/mug-preview", async (req, res) => {
       artworkUrl,
       mockupUrl: MUG_MOCKUP_URL,
       scale: 0.325,  // 25 % größer als 0.26
-      offsetX: 0.35, // weiter nach rechts, damit zentriert wirkt
-      offsetY: 0.37, // etwas unterhalb der Mitte
+      offsetX: 0.35, // etwas nach rechts
+      offsetY: 0.37, // etwas nach unten
     });
 
     previewCache.set(cacheKey, finalBuffer);
@@ -145,8 +145,8 @@ app.get("/mug-preview", async (req, res) => {
     res.send(finalBuffer);
   } catch (err) {
     console.error("Fehler in /mug-preview (NO BG):", err);
-    return res.status(500).json({
-      error: "Interner Fehler in /mug-preview",
+    res.status(500).json({
+      error: "Interner Fehler in /mug-preview (NO BG)",
       detail: err.message || String(err),
     });
   }
