@@ -45,12 +45,8 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
   // Artwork laden
   const artBuf = await loadImage(artworkUrl);
 
-  // in PNG mit Alpha konvertieren + **um –90° drehen**
-  const artPng = await sharp(artBuf)
-    .ensureAlpha()
-    .rotate(-90)   // <-- EINZIGE ÄNDERUNG
-    .png()
-    .toBuffer();
+  // in PNG mit Alpha konvertieren (falls nötig)
+  const artPng = await sharp(artBuf).ensureAlpha().png().toBuffer();
 
   // Mockup laden
   const mockBuf = await loadImage(mockupUrl);
