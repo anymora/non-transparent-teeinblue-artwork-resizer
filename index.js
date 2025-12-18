@@ -137,7 +137,7 @@ app.get("/tote-preview", async (req, res) => {
       mockupUrl: TOTE_MOCKUP_URL,
       scale: 0.34,   // ~42 % der Taschenbreite
       offsetX: 0.32, // leicht links
-      offsetY: 0.42, // etwas nach unten
+      offsetY: 0.48, // etwas nach unten
       overlayUrl: undefined, // keine zusätzliche Ebene
     });
 
@@ -175,7 +175,7 @@ app.get("/mug-preview", async (req, res) => {
       mockupUrl: MUG_MOCKUP_URL,
       scale: 0.30,
       offsetX: 0.34,
-      offsetY: 0.44,
+      offsetY: 0.45,
       overlayUrl: undefined, // keine zusätzliche Ebene
     });
 
