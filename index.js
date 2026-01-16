@@ -19,14 +19,14 @@ const TOTE_MOCKUP_URL =
 const MUG_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1901.jpg?v=1765218358";
 
-// NEU: T-Shirt Mockups
+// T-Shirt Mockups
 const TEE_WHITE_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1926.jpg?v=1765367168";
 
 const TEE_BLACK_MOCKUP_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/IMG_1924.jpg?v=1765367167";
 
-// NEU: Overlays für T-Shirts (PNG oben drauf)
+// Overlays für T-Shirts (PNG oben drauf)
 const TEE_WHITE_OVERLAY_URL =
   "https://cdn.shopify.com/s/files/1/0958/7346/6743/files/ber_wei_e_Shirt.png?v=1765367191";
 
@@ -75,7 +75,7 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
     throw new Error("Konnte Mockup-Abmessungen nicht lesen.");
   }
 
-  // Artwork skalieren: Breite = scale * Mockup-Breite
+  // Artwork skalieren
   const scaledArt = await sharp(artPng)
     .resize(Math.round(meta.width * scale), null, {
       fit: "inside",
@@ -91,7 +91,7 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
     { input: scaledArt, left, top }
   ];
 
-  // Falls Overlay gesetzt: PNG über alles legen
+  // Falls Overlay gesetzt
   if (overlayUrl) {
     const overlayBuf = await loadImage(overlayUrl);
     const overlayPng = await sharp(overlayBuf)
@@ -106,7 +106,6 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
     });
   }
 
-  // Artwork (und ggf. Overlay) auf Mockup compositen
   const finalBuffer = await mockSharp
     .composite(composites)
     .jpeg({ quality: 90 })
@@ -116,7 +115,7 @@ async function placeArtworkOnMockup({ artworkUrl, mockupUrl, scale, offsetX, off
 }
 
 // --------------------------------------------------
-// /tote-preview – Artwork auf Tragetasche
+// Artwork auf Tragetasche
 // --------------------------------------------------
 app.get("/tote-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -135,10 +134,10 @@ app.get("/tote-preview", async (req, res) => {
     const finalBuffer = await placeArtworkOnMockup({
       artworkUrl,
       mockupUrl: TOTE_MOCKUP_URL,
-      scale: 0.34,   // ~42 % der Taschenbreite
-      offsetX: 0.32, // leicht links
-      offsetY: 0.48, // etwas nach unten
-      overlayUrl: undefined, // keine zusätzliche Ebene
+      scale: 0.34,
+      offsetX: 0.32,
+      offsetY: 0.48,
+      overlayUrl: undefined,
     });
 
     previewCache.set(cacheKey, finalBuffer);
@@ -154,7 +153,7 @@ app.get("/tote-preview", async (req, res) => {
 });
 
 // --------------------------------------------------
-// /mug-preview – Artwork auf Tasse
+// Artwork auf Tasse
 // --------------------------------------------------
 app.get("/mug-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -192,7 +191,7 @@ app.get("/mug-preview", async (req, res) => {
 });
 
 // --------------------------------------------------
-// NEU: /tee-white-preview – Artwork auf T-Shirt weiß + Overlay
+// Artwork auf T-Shirt weiß + Overlay
 // --------------------------------------------------
 app.get("/tee-white-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -211,7 +210,6 @@ app.get("/tee-white-preview", async (req, res) => {
     const finalBuffer = await placeArtworkOnMockup({
       artworkUrl,
       mockupUrl: TEE_WHITE_MOCKUP_URL,
-      // Werte so gewählt, dass Druck relativ zentriert auf der Brust liegt.
       scale: 0.36,
       offsetX: 0.31,
       offsetY: 0.27,
@@ -231,7 +229,7 @@ app.get("/tee-white-preview", async (req, res) => {
 });
 
 // --------------------------------------------------
-// NEU: /tee-black-preview – Artwork auf T-Shirt schwarz + Overlay
+// Artwork auf T-Shirt schwarz + Overlay
 // --------------------------------------------------
 app.get("/tee-black-preview", async (req, res) => {
   const artworkUrl = req.query.url;
@@ -250,7 +248,6 @@ app.get("/tee-black-preview", async (req, res) => {
     const finalBuffer = await placeArtworkOnMockup({
       artworkUrl,
       mockupUrl: TEE_BLACK_MOCKUP_URL,
-      // gleiche Positionierung wie beim weißen Shirt
       scale: 0.36,
       offsetX: 0.31, // kleiner geht nach links
       offsetY: 0.27, // kleiner geht nach oben
